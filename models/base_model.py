@@ -3,15 +3,11 @@ import torch
 from collections import OrderedDict
 from . import networks
 
-
 class BaseModel():
-
-    # modify parser to add command line options,
-    # and also change the default values if needed
     @staticmethod
     def modify_commandline_options(parser, is_train):
         return parser
-    
+
     def name(self):
         return 'BaseModel'
 
@@ -34,45 +30,39 @@ class BaseModel():
     def forward(self):
         pass
 
-    # load and print networks; create schedulers
     def setup(self, opt, parser=None):
         if self.isTrain:
             self.schedulers = [networks.get_scheduler(optimizer, opt) for optimizer in self.optimizers]
 
         if not self.isTrain or opt.continue_train:
-            self.load_networks(opt.which_epoch)
+
+            self.load_networks(opt.epoch)
 
         self.print_networks(opt.verbose)
         torch.cuda.empty_cache()
 
-    # make models eval mode during test time
     def eval(self):
         for name in self.model_names:
             if isinstance(name, str):
                 net = getattr(self, 'net' + name)
                 net.eval()
 
-    # used in test time, wrapping `forward` in no_grad() so we don't save
-    # intermediate steps for backprop
     def test(self):
         with torch.no_grad():
             self.forward()
 
-    # get image paths
     def get_image_paths(self):
         return self.image_paths
 
     def optimize_parameters(self):
         pass
 
-    # update learning rate (called once every epoch)
     def update_learning_rate(self):
         for scheduler in self.schedulers:
             scheduler.step()
         lr = self.optimizers[0].param_groups[0]['lr']
         print('learning rate = %.7f' % lr)
 
-    # return visualization images. train.py will display these images, and save the images to a html
     def get_current_visuals(self):
         visual_ret = OrderedDict()
         for name in self.visual_names:
@@ -81,20 +71,17 @@ class BaseModel():
                 visual_ret['{}_{}'.format(parsname, name)] = getattr(self, name)
         return visual_ret
 
-    # return traning losses/errors. train.py will print out these errors as debugging information
     def get_current_losses(self):
         errors_ret = OrderedDict()
         for name in self.loss_names:
             if isinstance(name, str):
-                # float(...) works for both scalar tensor and float number
                 errors_ret[name] = float(getattr(self, 'loss_' + name))
         return errors_ret
 
-    # save models to the disk
-    def save_networks(self, which_epoch):
+    def save_networks(self, epoch):
         for name in self.model_names:
             if isinstance(name, str):
-                save_filename = '%s_net_%s.pth' % (which_epoch, name)
+                save_filename = '%s_net_%s.pth' % (epoch, name)
                 save_path = os.path.join(self.save_dir, save_filename)
                 net = getattr(self, 'net' + name)
 
@@ -106,7 +93,7 @@ class BaseModel():
 
     def __patch_instance_norm_state_dict(self, state_dict, module, keys, i=0):
         key = keys[i]
-        if i + 1 == len(keys):  # at the end, pointing to a parameter/buffer
+        if i + 1 == len(keys):
             if module.__class__.__name__.startswith('InstanceNorm') and \
                     (key == 'running_mean' or key == 'running_var'):
                 if getattr(module, key) is None:
@@ -117,28 +104,22 @@ class BaseModel():
         else:
             self.__patch_instance_norm_state_dict(state_dict, getattr(module, key), keys, i + 1)
 
-    # load models from the disk
-    def load_networks(self, which_epoch):
+    def load_networks(self, epoch):
         for name in self.model_names:
             if isinstance(name, str):
-                load_filename = '%s_net_%s.pth' % (which_epoch, name)
+                load_filename = '%s_net_%s.pth' % (epoch, name)
                 load_path = os.path.join(self.save_dir, load_filename)
                 net = getattr(self, 'net' + name)
                 if isinstance(net, torch.nn.DataParallel):
                     net = net.module
                 print('loading the model from %s' % load_path)
-                # if you are using PyTorch newer than 0.4 (e.g., built from
-                # GitHub source), you can remove str() on self.device
-                state_dict = torch.load(load_path, map_location=str(self.device))
+                state_dict = torch.load(load_path, map_location=self.device)
                 if hasattr(state_dict, '_metadata'):
                     del state_dict._metadata
-
-                # patch InstanceNorm checkpoints prior to 0.4
-                for key in list(state_dict.keys()):  # need to copy keys here because we mutate in loop
+                for key in list(state_dict.keys()):
                     self.__patch_instance_norm_state_dict(state_dict, net, key.split('.'))
-                net.load_state_dict(state_dict)
+                net.load_state_dict(state_dict,strict=False)
 
-    # print network information
     def print_networks(self, verbose):
         print('---------- Networks initialized -------------')
         for name in self.model_names:
@@ -152,7 +133,6 @@ class BaseModel():
                 print('[Network %s] Total number of parameters : %.3f M' % (name, num_params / 1e6))
         print('-----------------------------------------------')
 
-    # set requies_grad=Fasle to avoid computation
     def set_requires_grad(self, nets, requires_grad=False):
         if not isinstance(nets, list):
             nets = [nets]
